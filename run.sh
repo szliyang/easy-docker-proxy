@@ -14,6 +14,7 @@
 # 20261011-1432 feat: 系统 node 缺失或 <18 时自动下载官方便携版到 node-bin/ (免 root)
 # 20261011-1436 fix: node 便携版 x86 架构名 amd64→x64(官方无 linux-amd64 包, 404)
 # 20261011-1437 fix: 部署命令加 ?t=$(date +%s) 绕过 raw CDN 5 分钟缓存, 避免跑到旧脚本
+# 20261011-1526 fix: server.js 每次部署都拉最新(存在不再跳过), 有变化才替换, 失败时沿用本地
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -39,26 +40,31 @@ detect_port() {
   fi
 }
 
-# ========== 自举: 下载 server.js ==========
+# ========== 自举: 每次部署拉取最新 server.js, 有变化才替换 ==========
 ensure_server_js() {
-  if [[ -s "$SERVER_JS" ]]; then
-    green "✅ server.js 已存在 ($(wc -c < "$SERVER_JS") bytes)"
-    return
-  fi
-  rm -f "$SERVER_JS"                    # 清理上次失败残留的空文件, 避免误判已存在
   local rc=0
   echo "📥 Downloading server.js from ${RAW_BASE}/server.js ..."
-  curl -fL --connect-timeout 20 --retry 2 -o "${SERVER_JS}.tmp" "${RAW_BASE}/server.js" || rc=$?
+  curl -fL --connect-timeout 20 --retry 2 -o "${SERVER_JS}.tmp" \
+    "${RAW_BASE}/server.js?t=$(date +%s)" || rc=$?
   if [[ $rc -ne 0 || ! -s "${SERVER_JS}.tmp" ]]; then
     rm -f "${SERVER_JS}.tmp"
+    if [[ -s "$SERVER_JS" ]]; then
+      echo "⚠️ server.js 下载失败 (curl 退出码 ${rc}), 沿用本地已有版本 ($(wc -c < "$SERVER_JS") bytes)"
+      return
+    fi
     red "❌ server.js 下载失败 (curl 退出码 ${rc})"
     red "   URL: ${RAW_BASE}/server.js"
     red "   常见原因: 服务器无法访问 raw.githubusercontent.com (网络/DNS/被墙)"
     red "   手动诊断: curl -v ${RAW_BASE}/server.js -o /dev/null"
     exit 1
   fi
-  mv "${SERVER_JS}.tmp" "$SERVER_JS"
-  green "✅ server.js 下载完成 ($(wc -c < "$SERVER_JS") bytes)"
+  if [[ -s "$SERVER_JS" ]] && cmp -s "${SERVER_JS}.tmp" "$SERVER_JS"; then
+    rm -f "${SERVER_JS}.tmp"
+    green "✅ server.js 已是最新 ($(wc -c < "$SERVER_JS") bytes)"
+  else
+    mv "${SERVER_JS}.tmp" "$SERVER_JS"
+    green "✅ server.js 已更新到最新 ($(wc -c < "$SERVER_JS") bytes)"
+  fi
 }
 
 # ========== Node: 优先系统 node>=18, 否则免 root 下载官方便携版 ==========

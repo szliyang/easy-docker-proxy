@@ -8,7 +8,7 @@
 curl -Ls "https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run.sh?t=$(date +%s)" | sed 's/\r$//' | bash
 ```
 
-脚本会自动下载 `server.js` 到当前目录并启动（守护循环，崩溃自动重启）。要求：
+脚本会自动下载/更新 `server.js` 到最新版（每次部署拉取，有变化才替换）并启动（守护循环，崩溃自动重启）。要求：
 
 - 系统 **Node 18+**；缺失或版本过低时脚本自动从 nodejs.org 下载便携版到 `node-bin/`（免 root，`NODE_VER` 可指定版本）
 - NAT 服务器可直连 Docker Hub（海外机器）
