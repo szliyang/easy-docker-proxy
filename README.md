@@ -5,7 +5,7 @@
 ## 一键部署（NAT 服务器上执行）
 
 ```bash
-curl -Ls https://raw.githubusercontent.com/szliyang/NAT-Sing-box/main/docker-proxy/run.sh | sed 's/\r$//' | bash
+curl -Ls https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run.sh | sed 's/\r$//' | bash
 ```
 
 脚本会自动下载 `server.js` 到当前目录并启动（守护循环，崩溃自动重启）。要求：
