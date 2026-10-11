@@ -10,7 +10,7 @@ curl -Ls https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run
 
 脚本会自动下载 `server.js` 到当前目录并启动（守护循环，崩溃自动重启）。要求：
 
-- NAT 服务器上有 **Node 18+**（依赖内置 fetch）
+- 系统 **Node 18+**；缺失或版本过低时脚本自动从 nodejs.org 下载便携版到 `node-bin/`（免 root，`NODE_VER` 可指定版本）
 - NAT 服务器可直连 Docker Hub（海外机器）
 
 ## 端口
@@ -50,6 +50,7 @@ PORT=18080 curl -Ls .../run.sh | sed 's/\r$//' | bash   # 指定端口
 | `ARGO_ON` | `0` | `1` 时启动 Argo 隧道，获得 HTTPS 入口（可免配 insecure-registries） |
 | `ARGO_AUTH` + `ARGO_DOMAIN` | 空 | Argo 固定域名隧道 token + 域名；留空则用 trycloudflare 临时隧道 |
 | `ARGO_PORT` | `3000` | Argo 隧道指向的本地端口 |
+| `NODE_VER` | `v22.14.0` | 系统无 node≥18 时自动下载的便携版 node 版本 |
 
 ## 与 Workers 原版的差异
 

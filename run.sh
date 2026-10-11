@@ -6,10 +6,12 @@
 # 用法2(已下载到本地): bash run.sh
 # 可选: PORT=xxxx 指定端口(默认自动取 PTERODACTYL_SERVER_PORT/SERVER_PORT/3000)
 #       ARGO_ON=1 开启 Argo 隧道(HTTPS 入口); ARGO_AUTH+ARGO_DOMAIN 用固定域名
+#       NODE_VER=vXX.X.X 指定便携版 node 版本(默认 v22.14.0, 仅系统无 node>=18 时下载)
 # 20261011-1130 init: 新建脚本, 参考 sb_argo.sh 部署风格
 # 20261011-1140 fix: 支持管道自举, 自动下载 server.js 到当前目录
 # 20261011-1130 fix: RAW_BASE 改指独立仓库 easy-docker-proxy(原 NAT-Sing-box 子目录已 404)
 # 20261011-1418 fix: 下载失败不再静默退出, curl 去 -s 显示进度/错误码, 残留空 server.js 自动清理
+# 20261011-1432 feat: 系统 node 缺失或 <18 时自动下载官方便携版到 node-bin/ (免 root)
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -19,6 +21,8 @@ SERVER_JS="${WORKDIR}/server.js"
 CFD_BIN="${WORKDIR}/cloudflared"
 RAW_BASE="https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master"
 ARGO_LOCAL_PORT="${ARGO_PORT:-3000}"
+NODE_VER="${NODE_VER:-v22.14.0}"
+NODE_BIN=""
 
 red()    { echo -e "\e[1;91m$1\033[0m"; }
 green()  { echo -e "\e[1;32m$1\033[0m"; }
@@ -55,16 +59,48 @@ ensure_server_js() {
   green "✅ server.js 下载完成 ($(wc -c < "$SERVER_JS") bytes)"
 }
 
-check_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    red "❌ 未找到 node (需 18+), 请先安装"
+# ========== Node: 优先系统 node>=18, 否则免 root 下载官方便携版 ==========
+ensure_node() {
+  if command -v node >/dev/null 2>&1 \
+     && node -e 'process.exit(process.versions.node.split(".")[0]>=18?0:1)'; then
+    NODE_BIN="$(command -v node)"
+    green "✅ node $(node -v) (系统)"
+    return
+  fi
+  if command -v node >/dev/null 2>&1; then
+    echo "⚠️ 系统 node 版本过低 ($(node -v), 需 18+)"
+  else
+    echo "⚠️ 未找到 node"
+  fi
+  local arch; arch=$(detect_arch)
+  local dest="${WORKDIR}/node-bin"
+  if [[ -x "${dest}/bin/node" && "$("${dest}/bin/node" -v 2>/dev/null)" == "${NODE_VER}" ]]; then
+    NODE_BIN="${dest}/bin/node"
+    green "✅ node $("${NODE_BIN}" -v) (便携版已存在)"
+    return
+  fi
+  local pkg="node-${NODE_VER}-linux-${arch}"
+  local rc=0
+  echo "📥 Downloading ${pkg}.tar.gz from nodejs.org (免 root 便携版)..."
+  curl -fL --connect-timeout 20 --retry 2 -o "${WORKDIR}/node.tar.gz" \
+    "https://nodejs.org/dist/${NODE_VER}/${pkg}.tar.gz" || rc=$?
+  if [[ $rc -ne 0 || ! -s "${WORKDIR}/node.tar.gz" ]]; then
+    rm -f "${WORKDIR}/node.tar.gz"
+    red "❌ node 便携版下载失败 (curl 退出码 ${rc})"
+    red "   URL: https://nodejs.org/dist/${NODE_VER}/${pkg}.tar.gz"
+    red "   请手动安装 node 18+ 后重试"
     exit 1
   fi
-  if ! node -e 'process.exit(process.versions.node.split(".")[0]>=18?0:1)'; then
-    red "❌ node 版本过低 ($(node -v)), 需 18+ (依赖内置 fetch)"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  if ! tar -xzf "${WORKDIR}/node.tar.gz" -C "$dest" --strip-components=1; then
+    rm -f "${WORKDIR}/node.tar.gz"; rm -rf "$dest"
+    red "❌ node 便携版解压失败 (tar), 请手动安装 node 18+ 后重试"
     exit 1
   fi
-  green "✅ node $(node -v)"
+  rm -f "${WORKDIR}/node.tar.gz"
+  NODE_BIN="${dest}/bin/node"
+  green "✅ node $("${NODE_BIN}" -v) (便携版)"
 }
 
 detect_arch() {
@@ -117,7 +153,7 @@ start_argo() {
 run_loop() {
   purple "🚀 Starting docker-proxy on :${PORT} ..."
   while true; do
-    node "$SERVER_JS" || true
+    "$NODE_BIN" "$SERVER_JS" || true
     echo "⚠️ docker-proxy crashed. Restarting in 5s..."
     sleep 5
   done
@@ -126,7 +162,7 @@ run_loop() {
 PORT=$(detect_port)
 echo "📁 工作目录: ${WORKDIR}"
 echo "✅ 端口: ${PORT}"
-check_node
+ensure_node
 ensure_server_js
 start_argo
 run_loop
