@@ -2,12 +2,13 @@
 # =========================================
 # docker-proxy NAT 一键部署启动器(免 root, 支持管道执行)
 # 用法1(推荐, 自动下载 server.js):
-#   curl -Ls https://raw.githubusercontent.com/szliyang/NAT-Sing-box/main/docker-proxy/run.sh | sed 's/\r$//' | bash
+#   curl -Ls https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run.sh | sed 's/\r$//' | bash
 # 用法2(已下载到本地): bash run.sh
 # 可选: PORT=xxxx 指定端口(默认自动取 PTERODACTYL_SERVER_PORT/SERVER_PORT/3000)
 #       ARGO_ON=1 开启 Argo 隧道(HTTPS 入口); ARGO_AUTH+ARGO_DOMAIN 用固定域名
 # 20261011-1130 init: 新建脚本, 参考 sb_argo.sh 部署风格
 # 20261011-1140 fix: 支持管道自举, 自动下载 server.js 到当前目录
+# 20261011-1130 fix: RAW_BASE 改指独立仓库 easy-docker-proxy(原 NAT-Sing-box 子目录已 404)
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -15,7 +16,7 @@ export LC_ALL=C
 WORKDIR="$(pwd)"                      # 管道执行时无脚本目录, 统一用当前目录
 SERVER_JS="${WORKDIR}/server.js"
 CFD_BIN="${WORKDIR}/cloudflared"
-RAW_BASE="https://raw.githubusercontent.com/szliyang/NAT-Sing-box/main/docker-proxy"
+RAW_BASE="https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master"
 ARGO_LOCAL_PORT="${ARGO_PORT:-3000}"
 
 red()    { echo -e "\e[1;91m$1\033[0m"; }
