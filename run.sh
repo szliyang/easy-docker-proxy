@@ -9,6 +9,7 @@
 # 20261011-1130 init: 新建脚本, 参考 sb_argo.sh 部署风格
 # 20261011-1140 fix: 支持管道自举, 自动下载 server.js 到当前目录
 # 20261011-1130 fix: RAW_BASE 改指独立仓库 easy-docker-proxy(原 NAT-Sing-box 子目录已 404)
+# 20261011-1418 fix: 下载失败不再静默退出, curl 去 -s 显示进度/错误码, 残留空 server.js 自动清理
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -34,13 +35,24 @@ detect_port() {
 
 # ========== 自举: 下载 server.js ==========
 ensure_server_js() {
-  if [[ -f "$SERVER_JS" ]]; then
-    green "✅ server.js 已存在"
+  if [[ -s "$SERVER_JS" ]]; then
+    green "✅ server.js 已存在 ($(wc -c < "$SERVER_JS") bytes)"
     return
   fi
-  echo "📥 Downloading server.js..."
-  curl -Ls --fail --connect-timeout 20 -o "$SERVER_JS" "${RAW_BASE}/server.js"
-  green "✅ server.js 下载完成"
+  rm -f "$SERVER_JS"                    # 清理上次失败残留的空文件, 避免误判已存在
+  local rc=0
+  echo "📥 Downloading server.js from ${RAW_BASE}/server.js ..."
+  curl -fL --connect-timeout 20 --retry 2 -o "${SERVER_JS}.tmp" "${RAW_BASE}/server.js" || rc=$?
+  if [[ $rc -ne 0 || ! -s "${SERVER_JS}.tmp" ]]; then
+    rm -f "${SERVER_JS}.tmp"
+    red "❌ server.js 下载失败 (curl 退出码 ${rc})"
+    red "   URL: ${RAW_BASE}/server.js"
+    red "   常见原因: 服务器无法访问 raw.githubusercontent.com (网络/DNS/被墙)"
+    red "   手动诊断: curl -v ${RAW_BASE}/server.js -o /dev/null"
+    exit 1
+  fi
+  mv "${SERVER_JS}.tmp" "$SERVER_JS"
+  green "✅ server.js 下载完成 ($(wc -c < "$SERVER_JS") bytes)"
 }
 
 check_node() {
@@ -69,7 +81,15 @@ start_argo() {
   local arch; arch=$(detect_arch)
   if [[ ! -x "$CFD_BIN" ]]; then
     echo "📥 Downloading cloudflared (${arch})..."
-    curl -Ls --fail -o "$CFD_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
+    local rc=0
+    curl -fL --connect-timeout 20 --retry 2 -o "${CFD_BIN}.tmp" \
+      "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" || rc=$?
+    if [[ $rc -ne 0 || ! -s "${CFD_BIN}.tmp" ]]; then
+      rm -f "${CFD_BIN}.tmp"
+      red "❌ cloudflared 下载失败 (curl 退出码 ${rc}), 跳过 Argo 隧道"
+      return 0
+    fi
+    mv "${CFD_BIN}.tmp" "$CFD_BIN"
     chmod +x "$CFD_BIN"
   fi
   if [[ -n "${ARGO_AUTH:-}" && -n "${ARGO_DOMAIN:-}" ]]; then
@@ -80,7 +100,7 @@ start_argo() {
       --no-autoupdate --protocol http2 --logfile argo.log --loglevel info >/dev/null 2>&1 &
     local i argo_host=""
     for i in $(seq 1 30); do
-      argo_host=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' argo.log 2>/dev/null | head -n1)
+      argo_host=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' argo.log 2>/dev/null | head -n1 || true)
       [[ -n "$argo_host" ]] && break
       sleep 1
     done
@@ -104,8 +124,9 @@ run_loop() {
 }
 
 PORT=$(detect_port)
+echo "📁 工作目录: ${WORKDIR}"
 echo "✅ 端口: ${PORT}"
-ensure_server_js
 check_node
+ensure_server_js
 start_argo
 run_loop
