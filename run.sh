@@ -2,7 +2,7 @@
 # =========================================
 # docker-proxy NAT 一键部署启动器(免 root, 支持管道执行)
 # 用法1(推荐, 自动下载 server.js):
-#   curl -Ls https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run.sh | sed 's/\r$//' | bash
+#   curl -Ls "https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master/run.sh?t=$(date +%s)" | sed 's/\r$//' | bash
 # 用法2(已下载到本地): bash run.sh
 # 可选: PORT=xxxx 指定端口(默认自动取 PTERODACTYL_SERVER_PORT/SERVER_PORT/3000)
 #       ARGO_ON=1 开启 Argo 隧道(HTTPS 入口); ARGO_AUTH+ARGO_DOMAIN 用固定域名
@@ -13,6 +13,7 @@
 # 20261011-1418 fix: 下载失败不再静默退出, curl 去 -s 显示进度/错误码, 残留空 server.js 自动清理
 # 20261011-1432 feat: 系统 node 缺失或 <18 时自动下载官方便携版到 node-bin/ (免 root)
 # 20261011-1436 fix: node 便携版 x86 架构名 amd64→x64(官方无 linux-amd64 包, 404)
+# 20261011-1437 fix: 部署命令加 ?t=$(date +%s) 绕过 raw CDN 5 分钟缓存, 避免跑到旧脚本
 # =========================================
 set -euo pipefail
 export LC_ALL=C
