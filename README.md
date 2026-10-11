@@ -64,10 +64,10 @@ ARGO_AUTH=eyJxxxxxxxx                # 或 json: {"AccountTag":"..","TunnelSecre
 ARGO_DOMAIN=argo.example.com
 ```
 
-一行命令直接生成（复制改值即可）：
+一条命令生成 argo 固定域名配置文件(demo)
 
 ```bash
-printf 'ARGO_ON=1\nARGO_AUTH=eyJxxxxxxxx\nARGO_DOMAIN=argo.example.com\n' > docker-proxy.conf
+printf 'ARGO_ON=1\nARGO_DOMAIN=argo.example.com\nARGO_AUTH=eyJ你的token\n' > docker-proxy.conf
 ```
 
 固定域名隧道步骤：域名托管到 Cloudflare → Zero Trust → Networks/Tunnels → 创建隧道（复制 token）→ Public Hostname 填子域名，Type=HTTP，URL=localhost，Port=服务端口。启动后脚本会等日志确认 `Registered` 才报成功。
