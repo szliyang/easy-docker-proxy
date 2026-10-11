@@ -48,10 +48,29 @@ PORT=18080 curl -Ls .../run.sh | sed 's/\r$//' | bash   # 指定端口
 | `URL302` | 空 | 首页 302 跳转地址（浏览器 UA 访问时） |
 | `URL` | 空 | 首页伪装：`nginx` 返回 nginx 页，其他值反代该地址 |
 | `ARGO_ON` | `0` | `1` 时启动 Argo 隧道，获得 HTTPS 入口（可免配 insecure-registries） |
-| `ARGO_AUTH` + `ARGO_DOMAIN` | 空 | Argo 固定域名隧道 token + 域名；留空则用 trycloudflare 临时隧道 |
+| `ARGO_AUTH` + `ARGO_DOMAIN` | 空 | Argo 固定域名隧道：token（`eyJ..` 或 json `{"AccountTag":..,"TunnelSecret":..,"TunnelID":..}`）+ 域名；留空则用 trycloudflare 临时隧道 |
 | `ARGO_PORT` | 服务端口 | Argo 隧道指向的本地端口（默认跟随自动探测的 PORT） |
 | `NODE_VER` | `v22.14.0` | 系统无 node≥18 时自动下载的便携版 node 版本 |
 | `SERVER_IP` | 自动 | 启动横幅显示的服务器 IP（默认探测：翼龙变量 > 出网探测 > 网卡） |
+
+## 配置文件 docker-proxy.conf
+
+面板不方便注入环境变量时，在工作目录写 `docker-proxy.conf`，每行 `KEY=VALUE`（上面环境变量表中的变量都支持；环境变量优先于文件；兼容 Windows CRLF 上传）：
+
+```conf
+# 示例：开启固定域名 Argo
+ARGO_ON=1
+ARGO_AUTH=eyJxxxxxxxx                # 或 json: {"AccountTag":"..","TunnelSecret":"..","TunnelID":".."}
+ARGO_DOMAIN=argo.example.com
+```
+
+一行命令直接生成（复制改值即可）：
+
+```bash
+printf 'ARGO_ON=1\nARGO_AUTH=eyJxxxxxxxx\nARGO_DOMAIN=argo.example.com\n' > docker-proxy.conf
+```
+
+固定域名隧道步骤：域名托管到 Cloudflare → Zero Trust → Networks/Tunnels → 创建隧道（复制 token）→ Public Hostname 填子域名，Type=HTTP，URL=localhost，Port=服务端口。启动后脚本会等日志确认 `Registered` 才报成功。
 
 ## 与 Workers 原版的差异
 

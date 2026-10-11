@@ -7,6 +7,12 @@
 # 可选: PORT=xxxx 指定端口(默认自动取 PTERODACTYL_SERVER_PORT/SERVER_PORT/3000)
 #       ARGO_ON=1 开启 Argo 隧道(HTTPS 入口); ARGO_AUTH+ARGO_DOMAIN 用固定域名
 #       NODE_VER=vXX.X.X 指定便携版 node 版本(默认 v22.14.0, 仅系统无 node>=18 时下载)
+# 配置文件(面板不便传环境变量时): 工作目录写 docker-proxy.conf, 每行 KEY=VALUE:
+#       ARGO_ON=1
+#       ARGO_AUTH=eyJ..            (Cloudflare 隧道 token, 或 json {"AccountTag":..,"TunnelSecret":..,"TunnelID":..})
+#       ARGO_DOMAIN=argo.example.com
+#     环境变量优先于文件; 文件兼容 CRLF; 固定域名步骤: 域名托管 CF -> Zero Trust -> Networks/Tunnels
+#     -> 创建隧道复制 token -> Public Hostname 填子域名, Type=HTTP, URL=localhost, Port=服务端口
 # 20261011-1130 init: 新建脚本, 参考 sb_argo.sh 部署风格
 # 20261011-1140 fix: 支持管道自举, 自动下载 server.js 到当前目录
 # 20261011-1130 fix: RAW_BASE 改指独立仓库 easy-docker-proxy(原 NAT-Sing-box 子目录已 404)
@@ -16,6 +22,7 @@
 # 20261011-1437 fix: 部署命令加 ?t=$(date +%s) 绕过 raw CDN 5 分钟缓存, 避免跑到旧脚本
 # 20261011-1526 fix: server.js 每次部署都拉最新(存在不再跳过), 有变化才替换, 失败时沿用本地
 # 20261012-0118 fix: Argo 隧道目标端口默认跟随自动探测的服务端口(原写死 3000, 非默认端口机器上 502)
+# 20261012-0121 feat: docker-proxy.conf 配置文件 + 固定隧道 Registered 确认 + ARGO_AUTH 兼容 eyJ/json(移植 sb_argo)
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -23,6 +30,9 @@ export LC_ALL=C
 WORKDIR="$(pwd)"                      # 管道执行时无脚本目录, 统一用当前目录
 SERVER_JS="${WORKDIR}/server.js"
 CFD_BIN="${WORKDIR}/cloudflared"
+CONF_FILE="${WORKDIR}/docker-proxy.conf"   # 可选 KEY=VALUE 配置(面板不便传环境变量时用)
+ARGO_LOG="${WORKDIR}/argo.log"             # 固定隧道(token)日志
+ARGO_TEMP_LOG="${WORKDIR}/argo-temp.log"   # 临时隧道(trycloudflare)日志
 RAW_BASE="https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master"
 NODE_VER="${NODE_VER:-v22.14.0}"
 NODE_BIN=""
@@ -30,6 +40,28 @@ NODE_BIN=""
 red()    { echo -e "\e[1;91m$1\033[0m"; }
 green()  { echo -e "\e[1;32m$1\033[0m"; }
 purple() { echo -e "\e[1;35m$1\033[0m"; }
+
+# ========== 可选配置文件 docker-proxy.conf: KEY=VALUE, 已有环境变量优先(不覆盖) ==========
+load_conf() {
+  [[ -s "$CONF_FILE" ]] || return 0
+  local line k v loaded=""
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac
+    [[ "$line" != *=* ]] && continue
+    k="$(echo "${line%%=*}" | tr -d '[:space:]')"
+    v="${line#*=}"
+    v="${v%$'\r'}"                           # 兼容 Windows CRLF 上传
+    [[ -z "$k" ]] && continue
+    [[ -n "${!k:-}" ]] && continue          # 环境变量已存在则不覆盖
+    export "$k=$v"
+    loaded="${loaded}${k} "
+  done < "$CONF_FILE"
+  if [[ -n "$loaded" ]]; then
+    echo "📄 [配置] 已从 ${CONF_FILE} 加载: ${loaded}(环境变量优先)"
+  else
+    echo "📄 [配置] ${CONF_FILE} 存在但无新增变量(全部已被环境变量覆盖)"
+  fi
+}
 
 # ========== 端口自动获取: PORT > PTERODACTYL_SERVER_PORT > SERVER_PORT > 3000 ==========
 detect_port() {
@@ -121,6 +153,24 @@ detect_arch() {
 }
 
 # ========== 可选 Argo 隧道(为纯 HTTP 端口提供 HTTPS 入口) ==========
+# ARGO_AUTH 归一化: eyJ.. payload 原样返回(实测 cloudflared 直收裸 payload, 勿加 JWT 头);
+# json(AccountTag/TunnelSecret/TunnelID) 转成裸 payload; 无法识别返回空
+argo_auth_token() {
+  local auth="${ARGO_AUTH:-}"
+  auth="${auth%$'\r'}"
+  case "$auth" in
+    eyJ*) echo "$auth" ;;
+    '{'*)
+      local acc tid sec
+      acc="$(echo "$auth" | grep -oE '"AccountTag"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')"
+      tid="$(echo "$auth" | grep -oE '"TunnelID"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')"
+      sec="$(echo "$auth" | grep -oE '"TunnelSecret"[[:space:]]*:[[:space:]]*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')"
+      if [[ -z "$acc" || -z "$tid" || -z "$sec" ]]; then echo ""; return; fi
+      printf '{"a":"%s","t":"%s","s":"%s"}' "$acc" "$tid" "$sec" | base64 | tr '/+' '_-' | tr -d '=\n' ;;
+    *) echo "" ;;
+  esac
+}
+
 start_argo() {
   [[ "${ARGO_ON:-0}" != "1" ]] && return 0
   local arch; arch=$(detect_arch)
@@ -138,23 +188,43 @@ start_argo() {
     chmod +x "$CFD_BIN"
   fi
   if [[ -n "${ARGO_AUTH:-}" && -n "${ARGO_DOMAIN:-}" ]]; then
-    nohup "$CFD_BIN" tunnel run --token "$ARGO_AUTH" >/dev/null 2>&1 &
-    green "✅ Argo 隧道(token)已启动: https://${ARGO_DOMAIN}"
-  else
-    nohup "$CFD_BIN" tunnel --url "http://127.0.0.1:${ARGO_PORT:-$PORT}" \
-      --no-autoupdate --protocol http2 --logfile argo.log --loglevel info >/dev/null 2>&1 &
-    local i argo_host=""
-    for i in $(seq 1 30); do
-      argo_host=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' argo.log 2>/dev/null | head -n1 || true)
-      [[ -n "$argo_host" ]] && break
-      sleep 1
-    done
-    if [[ -n "$argo_host" ]]; then
-      green "✅ Argo 临时隧道: ${argo_host} (HTTPS, 免 insecure-registries 配置)"
-      green "   registry-mirrors 可直接填 ${argo_host}"
+    local token; token="$(argo_auth_token)"
+    if [[ -n "$token" ]]; then
+      echo "🌐 [Argo] 启动固定隧道(token): ${ARGO_DOMAIN}"
+      rm -f "$ARGO_LOG"
+      # 全局参数须在 tunnel 与 run 之间, 否则 token 丢失秒退(对齐 sb_argo 实测写法)
+      nohup "$CFD_BIN" tunnel --no-autoupdate --protocol http2 \
+        --logfile "$ARGO_LOG" --loglevel info run --token "$token" >/dev/null 2>&1 &
+      local i registered=""
+      for ((i = 1; i <= 30; i++)); do
+        registered="$(grep -o 'Registered tunnel connection' "$ARGO_LOG" 2>/dev/null | head -n1 || true)"
+        [[ -n "$registered" ]] && break
+        sleep 1
+      done
+      if [[ -n "$registered" ]]; then
+        green "✅ Argo 固定隧道已注册: https://${ARGO_DOMAIN} (registry-mirrors 可直接填该域名, 日志: ${ARGO_LOG})"
+        return 0
+      fi
+      red "⚠️ Argo 固定隧道 30s 内未确认注册(查 ${ARGO_LOG}: token 是否有效), 回退临时隧道"
     else
-      red "⚠️ Argo 域名获取失败, 查看 argo.log; 不影响本地 HTTP 端口"
+      red "⚠️ ARGO_AUTH 无法识别(需 eyJ.. token 或含 AccountTag/TunnelSecret/TunnelID 的 json), 回退临时隧道"
     fi
+  fi
+  echo "🌐 [Argo] 启动临时隧道: 127.0.0.1:${ARGO_PORT:-$PORT} -> trycloudflare.com"
+  rm -f "$ARGO_TEMP_LOG"
+  nohup "$CFD_BIN" tunnel --url "http://127.0.0.1:${ARGO_PORT:-$PORT}" \
+    --no-autoupdate --protocol http2 --logfile "$ARGO_TEMP_LOG" --loglevel info >/dev/null 2>&1 &
+  local i argo_host=""
+  for i in $(seq 1 30); do
+    argo_host=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$ARGO_TEMP_LOG" 2>/dev/null | head -n1 || true)
+    [[ -n "$argo_host" ]] && break
+    sleep 1
+  done
+  if [[ -n "$argo_host" ]]; then
+    green "✅ Argo 临时隧道: ${argo_host} (HTTPS, 免 insecure-registries 配置)"
+    green "   registry-mirrors 可直接填 ${argo_host} (域名每次重启会变)"
+  else
+    red "⚠️ Argo 域名获取失败, 查看 ${ARGO_TEMP_LOG}; 不影响本地 HTTP 端口"
   fi
 }
 
@@ -168,6 +238,7 @@ run_loop() {
   done
 }
 
+load_conf
 PORT=$(detect_port)
 echo "📁 工作目录: ${WORKDIR}"
 echo "✅ 端口: ${PORT}"
