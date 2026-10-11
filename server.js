@@ -5,9 +5,11 @@
 // Docker 镜像仓库反代: 默认 Docker Hub, 支持子域前缀路由(需域名)与 ?ns= 指定上游
 // 20261011-1130 init: 从 Workers _worker.js 移植, 去除边缘缓存/事件监听, 新增 token 内存缓存与 NAT 端口自动获取
 // 20261011-1140 fix: 上游转发强制 https 并清带入站端口(Workers 天然 https, Node 需手动)
+// 20261011-1442 feat: 启动横幅显示服务器IP(SERVER_IP > PTERODACTYL_SERVER_IP > 出网探测 > 网卡回退)
 // =========================================
 'use strict';
 const http = require('http');
+const os = require('os');
 const { Readable } = require('stream');
 
 // ========== NAT 端口自动获取: PORT > PTERODACTYL_SERVER_PORT > SERVER_PORT > 3000 ==========
@@ -230,9 +232,31 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ========== 服务器 IP 探测: SERVER_IP > PTERODACTYL_SERVER_IP > 出网探测 > 网卡回退 ==========
+const isIPText = t => /^(\d{1,3}\.){3}\d{1,3}$/.test(t) || (/^[0-9a-fA-F:]+$/.test(t) && t.includes(':'));
+async function detectServerIP() {
+  if (process.env.SERVER_IP) return process.env.SERVER_IP;
+  if (process.env.PTERODACTYL_SERVER_IP) return process.env.PTERODACTYL_SERVER_IP;
+  for (const svc of ['https://api.ipify.org', 'https://checkip.amazonaws.com']) {
+    try {
+      const r = await fetch(svc, { signal: AbortSignal.timeout(3000) });
+      const t = (await r.text()).trim();
+      if (isIPText(t)) return t;
+    } catch (e) { /* 超时/不通, 试下一个 */ }
+  }
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const ni of list || []) {
+      if ((ni.family === 'IPv4' || ni.family === 4) && !ni.internal) return ni.address;
+    }
+  }
+  return '<你的IP>';
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ docker-proxy(NAT) listening on :${PORT}`);
-  console.log(`   Docker Hub:   http://<你的IP>:${PORT}  (daemon.json 配 registry-mirrors + insecure-registries)`);
-  console.log(`   其他仓库:     http://<你的IP>:${PORT}?ns=ghcr.io 或 子域前缀 ghcr.你的域名`);
-  console.log(`   示例拉取:     docker pull <你的IP>:${PORT}/library/nginx:latest`);
+  detectServerIP().then(ip => {
+    console.log(`   Docker Hub:   http://${ip}:${PORT}  (daemon.json 配 registry-mirrors + insecure-registries)`);
+    console.log(`   其他仓库:     http://${ip}:${PORT}?ns=ghcr.io 或 子域前缀 ghcr.你的域名`);
+    console.log(`   示例拉取:     docker pull ${ip}:${PORT}/library/nginx:latest`);
+  });
 });

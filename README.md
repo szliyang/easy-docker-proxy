@@ -51,6 +51,7 @@ PORT=18080 curl -Ls .../run.sh | sed 's/\r$//' | bash   # 指定端口
 | `ARGO_AUTH` + `ARGO_DOMAIN` | 空 | Argo 固定域名隧道 token + 域名；留空则用 trycloudflare 临时隧道 |
 | `ARGO_PORT` | `3000` | Argo 隧道指向的本地端口 |
 | `NODE_VER` | `v22.14.0` | 系统无 node≥18 时自动下载的便携版 node 版本 |
+| `SERVER_IP` | 自动 | 启动横幅显示的服务器 IP（默认探测：翼龙变量 > 出网探测 > 网卡） |
 
 ## 与 Workers 原版的差异
 
