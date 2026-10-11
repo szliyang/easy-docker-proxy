@@ -15,6 +15,7 @@
 # 20261011-1436 fix: node 便携版 x86 架构名 amd64→x64(官方无 linux-amd64 包, 404)
 # 20261011-1437 fix: 部署命令加 ?t=$(date +%s) 绕过 raw CDN 5 分钟缓存, 避免跑到旧脚本
 # 20261011-1526 fix: server.js 每次部署都拉最新(存在不再跳过), 有变化才替换, 失败时沿用本地
+# 20261012-0118 fix: Argo 隧道目标端口默认跟随自动探测的服务端口(原写死 3000, 非默认端口机器上 502)
 # =========================================
 set -euo pipefail
 export LC_ALL=C
@@ -23,7 +24,6 @@ WORKDIR="$(pwd)"                      # 管道执行时无脚本目录, 统一�
 SERVER_JS="${WORKDIR}/server.js"
 CFD_BIN="${WORKDIR}/cloudflared"
 RAW_BASE="https://raw.githubusercontent.com/szliyang/easy-docker-proxy/master"
-ARGO_LOCAL_PORT="${ARGO_PORT:-3000}"
 NODE_VER="${NODE_VER:-v22.14.0}"
 NODE_BIN=""
 
@@ -141,7 +141,7 @@ start_argo() {
     nohup "$CFD_BIN" tunnel run --token "$ARGO_AUTH" >/dev/null 2>&1 &
     green "✅ Argo 隧道(token)已启动: https://${ARGO_DOMAIN}"
   else
-    nohup "$CFD_BIN" tunnel --url "http://127.0.0.1:${ARGO_LOCAL_PORT}" \
+    nohup "$CFD_BIN" tunnel --url "http://127.0.0.1:${ARGO_PORT:-$PORT}" \
       --no-autoupdate --protocol http2 --logfile argo.log --loglevel info >/dev/null 2>&1 &
     local i argo_host=""
     for i in $(seq 1 30); do
